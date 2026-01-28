@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { supabase } from './supabaseClient';
 
 const statusOptions = ['Concept', 'Planned', 'Built'];
 const tierOptions = [
@@ -77,9 +78,23 @@ const defaultSources = [
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
   const [sections, setSections] = useState(initialSections);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
+  const [loginForm, setLoginForm] = useState({
+    email: '',
+    password: '',
+  });
+  const [registerForm, setRegisterForm] = useState({
+    email: '',
+    password: '',
+    company: '',
+  });
   const [profileSettings, setProfileSettings] = useState({
     tiers: new Set([tierOptions[0], tierOptions[1]]),
     mission: missionOptions[0],
@@ -118,8 +133,86 @@ export default function App() {
     }, {});
   }, [sections]);
 
-  const handleLogin = () => {
-    setIsAuthenticated(true);
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadSession = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (!isMounted) {
+        return;
+      }
+      if (error) {
+        setAuthError(error.message);
+      }
+      setIsAuthenticated(Boolean(data.session));
+      setUser(data.session?.user ?? null);
+      setIsSessionLoading(false);
+    };
+
+    loadSession();
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(Boolean(session));
+      setUser(session?.user ?? null);
+      setIsSessionLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleLogin = async () => {
+    setIsAuthLoading(true);
+    setAuthError('');
+    setAuthMessage('');
+    const { error } = await supabase.auth.signInWithPassword({
+      email: loginForm.email,
+      password: loginForm.password,
+    });
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      setAuthMessage('Signed in successfully. Redirecting to your dashboard.');
+    }
+    setIsAuthLoading(false);
+  };
+
+  const handleRegister = async () => {
+    setIsAuthLoading(true);
+    setAuthError('');
+    setAuthMessage('');
+    const { data, error } = await supabase.auth.signUp({
+      email: registerForm.email,
+      password: registerForm.password,
+      options: {
+        data: {
+          company_name: registerForm.company,
+        },
+      },
+    });
+    if (error) {
+      setAuthError(error.message);
+    } else if (!data.session) {
+      setAuthMessage(
+        'Account created. Confirm the email link to activate your workspace.',
+      );
+    } else {
+      setAuthMessage('Account created and signed in successfully.');
+    }
+    setIsAuthLoading(false);
+  };
+
+  const handleLogout = async () => {
+    setIsAuthLoading(true);
+    setAuthError('');
+    setAuthMessage('');
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setAuthError(error.message);
+    }
+    setIsAuthLoading(false);
   };
 
   const handleOpenAddSection = () => {
@@ -239,48 +332,144 @@ export default function App() {
           <div className="auth-grid">
             <div className="auth-card">
               <h2>Sign in</h2>
-              <label className="field">
-                Email
-                <input type="email" placeholder="engineer@ficsit.io" />
-              </label>
-              <label className="field">
-                Password
-                <input type="password" placeholder="••••••••" />
-              </label>
-              <button type="button" className="primary" onClick={handleLogin}>
-                Continue to dashboard
-              </button>
-              <p className="helper">
-                Protected by workspace keys and activity logs.
-              </p>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  handleLogin();
+                }}
+              >
+                <label className="field">
+                  Email
+                  <input
+                    type="email"
+                    placeholder="engineer@ficsit.io"
+                    value={loginForm.email}
+                    onChange={(event) =>
+                      setLoginForm((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  Password
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={loginForm.password}
+                    onChange={(event) =>
+                      setLoginForm((prev) => ({
+                        ...prev,
+                        password: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={
+                    isAuthLoading ||
+                    isSessionLoading ||
+                    !loginForm.email ||
+                    !loginForm.password
+                  }
+                >
+                  {isAuthLoading ? 'Signing in…' : 'Continue to dashboard'}
+                </button>
+                <p className="helper">
+                  Protected by workspace keys and activity logs.
+                </p>
+              </form>
             </div>
             <div className="auth-card">
               <h2>Create account</h2>
-              <label className="field">
-                Email
-                <input type="email" placeholder="new@ficsit.io" />
-              </label>
-              <label className="field">
-                Password
-                <input type="password" placeholder="Minimum 8 characters" />
-              </label>
-              <label className="field">
-                Company name
-                <input type="text" placeholder="FICSIT Division" />
-              </label>
-              <button type="button" className="secondary">
-                Register workspace
-              </button>
-              <p className="helper">
-                New accounts get a default profile with Tier 1 unlocked.
-              </p>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  handleRegister();
+                }}
+              >
+                <label className="field">
+                  Email
+                  <input
+                    type="email"
+                    placeholder="new@ficsit.io"
+                    value={registerForm.email}
+                    onChange={(event) =>
+                      setRegisterForm((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  Password
+                  <input
+                    type="password"
+                    placeholder="Minimum 8 characters"
+                    value={registerForm.password}
+                    onChange={(event) =>
+                      setRegisterForm((prev) => ({
+                        ...prev,
+                        password: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  Company name
+                  <input
+                    type="text"
+                    placeholder="FICSIT Division"
+                    value={registerForm.company}
+                    onChange={(event) =>
+                      setRegisterForm((prev) => ({
+                        ...prev,
+                        company: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="secondary"
+                  disabled={
+                    isAuthLoading ||
+                    isSessionLoading ||
+                    !registerForm.email ||
+                    !registerForm.password ||
+                    !registerForm.company
+                  }
+                >
+                  {isAuthLoading ? 'Registering…' : 'Register workspace'}
+                </button>
+                <p className="helper">
+                  New accounts get a default profile with Tier 1 unlocked.
+                </p>
+              </form>
             </div>
           </div>
+          {isSessionLoading && (
+            <div className="notice">
+              <strong>Checking session</strong>
+              <p>Verifying your Supabase session before loading the workspace.</p>
+            </div>
+          )}
+          {(authError || authMessage) && (
+            <div className="notice">
+              {authError && <strong>Sign-in error</strong>}
+              {authMessage && <strong>Authentication update</strong>}
+              <p>{authError || authMessage}</p>
+            </div>
+          )}
           <div className="notice">
-            <strong>Demo only</strong>
+            <strong>Supabase connected</strong>
             <p>
-              Authentication is a front-end mock right now. Hook this into a
-              real login service to make user data truly private.
+              Use your Supabase credentials to access the workspace and keep your
+              factory data synced across devices.
             </p>
           </div>
         </section>
@@ -310,8 +499,17 @@ export default function App() {
           </button>
         </nav>
         <div className="app-bar__meta">
+          {user?.email && <span className="app-pill">{user.email}</span>}
           <span className="app-pill">Tier 2 Active</span>
           <span className="app-pill accent">SYNC OK</span>
+          <button
+            type="button"
+            className="ghost"
+            onClick={handleLogout}
+            disabled={isAuthLoading}
+          >
+            {isAuthLoading ? 'Signing out…' : 'Sign out'}
+          </button>
         </div>
       </div>
       <header className="topbar">
